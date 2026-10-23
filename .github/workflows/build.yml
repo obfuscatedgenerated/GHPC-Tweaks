@@ -31,7 +31,7 @@ jobs:
       - name: Assemble release bundle
         run: |
           version="${GITHUB_REF_NAME//\//-}"
-          bundle="guitar-hero-pc-tweaks-${version}"
+          bundle="ghpc-tweaks-${version}"
           echo "BUNDLE=${bundle}" >> "$GITHUB_ENV"
 
           mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd"
