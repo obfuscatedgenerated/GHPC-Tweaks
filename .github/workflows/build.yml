@@ -26,7 +26,7 @@ jobs:
           sudo apt-get install -y g++-mingw-w64-i686
 
       - name: Build Rock Band guitar fix
-        run: ./gh3-rb-guitar-fix/build.sh
+        run: ./gh3-rb-fix/build.sh
 
       - name: Assemble release bundle
         run: |
@@ -34,12 +34,12 @@ jobs:
           bundle="guitar-hero-pc-tweaks-${version}"
           echo "BUNDLE=${bundle}" >> "$GITHUB_ENV"
 
-          mkdir -p "${bundle}/gh3-rb-guitar-fix" "${bundle}/dxwnd"
+          mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd"
           cp gh3-rb-guitar-fix/dist/xinput1_3.dll \
              gh3-rb-guitar-fix/dist/xinput1_2.dll \
              gh3-rb-guitar-fix/dist/xinput1_1.dll \
              gh3-rb-guitar-fix/README.md \
-             "${bundle}/gh3-rb-guitar-fix/"
+             "${bundle}/gh3-rb-fix/"
           cp dxwnd/*.dxw dxwnd/README.md "${bundle}/dxwnd/"
           cp README.md "${bundle}/"
 
