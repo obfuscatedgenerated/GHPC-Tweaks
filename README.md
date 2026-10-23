@@ -6,7 +6,7 @@ Each tweak lives in its own folder with its own README and can be combined arbit
 
 | Tweak | Games | What it does |
 |---|---|---|
-| [Rock Band guitar fix](gh3-rb-guitar-fix/) | GH3 | Makes Xbox 360 Rock Band guitars (e.g. the RB1 Stratocaster) play correctly |
+| [Rock Band guitar fix](gh3-rb-fix/) | GH3 | Makes Xbox 360 Rock Band guitars (e.g. the RB1 Stratocaster) play correctly |
 | [DxWnd configs](dxwnd/) | GH3, GHWT | Borderless window at native resolution, uncapped FPS, much lower input lag |
 
 ## Downloads
