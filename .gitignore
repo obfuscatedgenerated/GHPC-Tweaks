@@ -1,0 +1,6 @@
+dist/
+*.obj
+*.lib
+*.exp
+*.log
+xinput_proxy.debug
