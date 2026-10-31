@@ -8,7 +8,7 @@ Each tweak lives in its own folder with its own README and can be combined arbit
 |---|---|---|
 | [Rock Band guitar fix](gh3-rb-fix/) | GH3 | Makes Xbox 360 Rock Band guitars (e.g. the RB1 Stratocaster) play correctly |
 | [DxWnd configs](dxwnd/) | GH3, GHWT | Borderless window at native resolution, uncapped FPS, much lower input lag |
-| [4GB] | GHWT | 32 bit executables are limited by defualt to 2GB. This script sets the Large Address Aware flag to let it have up to 4GB of address space. |
+| [4GB](4gb/) | GHWT | 32 bit executables are limited by defualt to 2GB. This script sets the Large Address Aware flag to let it have up to 4GB of address space. |
 
 ## Downloads
 
