@@ -1,4 +1,4 @@
-# Guitar Hero PC Tweaks
+# Guitar Hero PC Tweaks - Now with GHWT:VR!
 
 Fixes and improvements for the PC versions of Guitar Hero III and Guitar Hero World Tour.
 
