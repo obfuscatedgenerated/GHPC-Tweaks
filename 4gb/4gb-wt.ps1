@@ -1,4 +1,4 @@
-$exePath = Join-Path (Get-Location) 'GHWT.exe'
+$exePath = Join-Path $PSScriptRoot 'GHWT.exe'
 Copy-Item $exePath "$exePath.backup" -ErrorAction Stop
 $bytes = [System.IO.File]::ReadAllBytes($exePath)
 $peHeaderOffset = [BitConverter]::ToInt32($bytes, 0x3C)
