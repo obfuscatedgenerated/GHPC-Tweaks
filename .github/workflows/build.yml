@@ -28,19 +28,49 @@ jobs:
       - name: Build Rock Band guitar fix
         run: sh ./gh3-rb-fix/build.sh
 
+      - name: Build WT:VR
+        env:
+          WTVR_VERSION: ${{ github.ref_name }}
+        run: |
+          sh ./wt-vr/build.sh
+          sh ./wt-vr/tools/probe/build.sh
+
+      # The OpenXR loader isn't built here: it's Khronos' own Windows build, from the release matching
+      # the headers wt-vr/build.sh used (its OPENXR_VERSION).
+      - name: Fetch the OpenXR loader
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^OPENXR_VERSION=\${OPENXR_VERSION:-\(.*\)}$/\1/p' wt-vr/build.sh)
+          mkdir -p wt-vr/openxr-loader
+          gh release download "$version" --repo KhronosGroup/OpenXR-SDK-Source \
+              --pattern 'openxr_loader_windows*.zip' --dir wt-vr/openxr-loader
+          (cd wt-vr/openxr-loader && unzip -q -o ./*.zip)
+          loader=$(find wt-vr/openxr-loader -name openxr_loader.dll -path '*/Win32/*' ! -path '*uwp*' | head -n 1)
+          if [ -z "$loader" ]; then echo "No 32-bit openxr_loader.dll in the release zip"; exit 1; fi
+          cp "$loader" wt-vr/dist/openxr_loader.dll
+          cp wt-vr/openxr-sdk/LICENSE wt-vr/dist/openxr_loader_LICENSE.txt
+
       - name: Assemble release bundle
         run: |
           version="${GITHUB_REF_NAME//\//-}"
           bundle="ghpc-tweaks-${version}"
           echo "BUNDLE=${bundle}" >> "$GITHUB_ENV"
 
-          mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd"
+          mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd" "${bundle}/wt-vr/ghwt_vr/height_maps" "${bundle}/wt-vr/tools/probe"
           cp gh3-rb-fix/dist/xinput1_3.dll \
              gh3-rb-fix/dist/xinput1_2.dll \
              gh3-rb-fix/dist/xinput1_1.dll \
              gh3-rb-fix/README.md \
              "${bundle}/gh3-rb-fix/"
           cp dxwnd/*.dxw dxwnd/README.md "${bundle}/dxwnd/"
+          cp wt-vr/dist/d3d9.dll \
+             wt-vr/dist/openxr_loader.dll \
+             wt-vr/dist/openxr_loader_LICENSE.txt \
+             wt-vr/README.md \
+             "${bundle}/wt-vr/"
+          cp wt-vr/height_maps/*.bmp "${bundle}/wt-vr/ghwt_vr/height_maps/"
+          cp wt-vr/tools/probe/dist/d3d9.dll wt-vr/tools/probe/README.md "${bundle}/wt-vr/tools/probe/"
           cp README.md "${bundle}/"
 
           (cd "${bundle}" && zip -r "../${bundle}.zip" .)
