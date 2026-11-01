@@ -45,7 +45,7 @@ jobs:
           mkdir -p wt-vr/openxr-loader
           gh release download "$version" --repo KhronosGroup/OpenXR-SDK-Source \
               --pattern 'openxr_loader_windows*.zip' --dir wt-vr/openxr-loader
-          (cd wt-vr/openxr-loader && unzip -q -o ./*.zip)
+          (cd wt-vr/openxr-loader && for zip in ./*.zip; do unzip -q -o "$zip"; done)
           loader=$(find wt-vr/openxr-loader -name openxr_loader.dll -path '*/Win32/*' ! -path '*uwp*' | head -n 1)
           if [ -z "$loader" ]; then echo "No 32-bit openxr_loader.dll in the release zip"; exit 1; fi
           cp "$loader" wt-vr/dist/openxr_loader.dll

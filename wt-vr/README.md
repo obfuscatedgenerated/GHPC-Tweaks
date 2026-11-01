@@ -21,7 +21,11 @@ Guitar Hero World Tour (PC) in VR, through any OpenXR runtime. You stand on stag
    - the `ghwt_vr` folder, which holds the height maps that make the notes 3D
 3. Start your VR runtime (e.g. Virtual Desktop), then start the game.
 
-The first run creates `ghwt_vr\vr.ini` (settings) and `ghwt_vr\vr_log.txt` (log). To uninstall, delete `d3d9.dll`, `openxr_loader.dll` and the `ghwt_vr` folder.
+The first run creates `ghwt_vr\vr.ini` (settings) and `ghwt_vr\vr_log.txt` (log).
+
+To play without VR, add `-novr` to the game's launch options (via a Windows shortcut, or Steam: right-click the game → Properties → Launch Options; with DxWnd, the profile's command line). The mod then does nothing: no VR runtime starts, and the game runs exactly as it would without it. Forgetting it is mostly harmless: without a headset the mod gives up starting VR and the game draws as normal. But it may start your VR runtime (e.g. SteamVR) and its hotkeys stay active.
+
+To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt` and the `ghwt_vr` folder.
 
 ## Features
 

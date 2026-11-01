@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cctype>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -3981,6 +3982,24 @@ static LONG WINAPI LogCrash(EXCEPTION_POINTERS* exceptionInfo) {
     return g_previousCrashFilter ? g_previousCrashFilter(exceptionInfo) : EXCEPTION_CONTINUE_SEARCH;
 }
 
+// -novr on the game's command line (e.g. Steam launch options): the mod hooks nothing and the game runs
+// exactly as it would without it - no VR runtime started, no hotkeys.
+static bool g_vrDisabled = false;
+
+static bool CommandLineHas(const char* argument) {
+    std::string commandLine = GetCommandLineA();
+    for (char& character : commandLine) character = char(tolower(static_cast<unsigned char>(character)));
+    size_t start = 0;
+    while ((start = commandLine.find(argument, start)) != std::string::npos) {
+        const size_t end = start + strlen(argument);
+        const bool startsWord = start == 0 || commandLine[start - 1] == ' ' || commandLine[start - 1] == '"';
+        const bool endsWord = end == commandLine.size() || commandLine[end] == ' ' || commandLine[end] == '"';
+        if (startsWord && endsWord) return true;
+        start = end;
+    }
+    return false;
+}
+
 static void EnsureInitialized() {
     if (g_realD3D9) return;
 
@@ -3994,6 +4013,15 @@ static void EnsureInitialized() {
     g_loaderPath = gameDir + "\\openxr_loader.dll";
     CreateDirectoryA(g_outputDir.c_str(), nullptr);
     OpenLog(g_outputDir);
+    g_vrDisabled = CommandLineHas("-novr");
+    if (g_vrDisabled) {
+        LogLine("WT:VR %s loaded - VR off (-novr on the command line): the game runs as normal", WTVR_VERSION);
+        char systemDirectory[MAX_PATH];
+        GetSystemDirectoryA(systemDirectory, MAX_PATH);
+        g_realD3D9 = LoadLibraryA((std::string(systemDirectory) + "\\d3d9.dll").c_str());
+        if (!g_realD3D9) LogLine("FAILED to load real d3d9.dll");
+        return;
+    }
     LoadSettings();
     LoadSpots();
     g_previousCrashFilter = SetUnhandledExceptionFilter(LogCrash);
@@ -4021,7 +4049,7 @@ IDirect3D9* WINAPI Direct3DCreate9(UINT sdkVersion) {
     using Direct3DCreate9Fn = IDirect3D9* (WINAPI*)(UINT);
     static auto realCreate = RealExport<Direct3DCreate9Fn>("Direct3DCreate9");
     IDirect3D9* direct3d = realCreate ? realCreate(sdkVersion) : nullptr;
-    if (direct3d) PatchVtableSlot(direct3d, Slot::CreateDevice, (void*)HookedCreateDevice, (void**)&g_originalCreateDevice);
+    if (direct3d && !g_vrDisabled) PatchVtableSlot(direct3d, Slot::CreateDevice, (void*)HookedCreateDevice, (void**)&g_originalCreateDevice);
     return direct3d;
 }
 
