@@ -98,6 +98,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - Saved spots keyed by venue, not by start camera.
 - Performance: a VR resolution setting, uploading frames on a background thread, drawing shadow maps once.
 - A settings editor.
+- Better method for band member mode 2 (editing meshes and animations directly, syncing guitar to tilt sensor for fake tracking)
 
 ## Using it
 
