@@ -68,7 +68,7 @@ jobs:
              "${bundle}/gh3-rb-fix/"
           cp dxwnd/*.dxw dxwnd/README.md "${bundle}/dxwnd/"
           cp 4gb/4gb-wt.ps1 4gb/README.md "${bundle}/4gb/"
-          cp wt-any-mic/dist/dsound.dll wt-any-mic/README.md "${bundle}/wt-any-mic/"
+          cp wt-any-mic/dist/dsound.dll wt-any-mic/wt-any-mic.ini wt-any-mic/README.md "${bundle}/wt-any-mic/"
           cp wt-vr/dist/d3d9.dll \
              wt-vr/dist/openxr_loader.dll \
              wt-vr/dist/openxr_loader_LICENSE.txt \
