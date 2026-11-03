@@ -28,6 +28,9 @@ jobs:
       - name: Build Rock Band guitar fix
         run: sh ./gh3-rb-fix/build.sh
 
+      - name: Build WT any mic
+        run: sh ./wt-any-mic/build.sh
+
       - name: Build WT:VR
         env:
           WTVR_VERSION: ${{ github.ref_name }}
@@ -57,7 +60,7 @@ jobs:
           bundle="ghpc-tweaks-${version}"
           echo "BUNDLE=${bundle}" >> "$GITHUB_ENV"
 
-          mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd" "${bundle}/wt-vr/ghwt_vr/height_maps" "${bundle}/wt-vr/tools/probe" "${bundle}/4gb"
+          mkdir -p "${bundle}/gh3-rb-fix" "${bundle}/dxwnd" "${bundle}/wt-vr/ghwt_vr/height_maps" "${bundle}/wt-vr/tools/probe" "${bundle}/4gb" "${bundle}/wt-any-mic"
           cp gh3-rb-fix/dist/xinput1_3.dll \
              gh3-rb-fix/dist/xinput1_2.dll \
              gh3-rb-fix/dist/xinput1_1.dll \
@@ -65,6 +68,7 @@ jobs:
              "${bundle}/gh3-rb-fix/"
           cp dxwnd/*.dxw dxwnd/README.md "${bundle}/dxwnd/"
           cp 4gb/4gb-wt.ps1 4gb/README.md "${bundle}/4gb/"
+          cp wt-any-mic/dist/dsound.dll wt-any-mic/README.md "${bundle}/wt-any-mic/"
           cp wt-vr/dist/d3d9.dll \
              wt-vr/dist/openxr_loader.dll \
              wt-vr/dist/openxr_loader_LICENSE.txt \
