@@ -87,6 +87,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - **Performance:** everything is drawn twice. If it's slow, lower `render_scale` or try `stereo_mode=0`.
 - Vocals camera controller doesn't start, so camera angle changes often without culling prevention
 - `save_textures=1` only works in VR (because it's implemented in the heightmap pipeline)
+- Band members occasionally change to chrome shading from camera LOD
 
 ## Planned
 
@@ -143,7 +144,8 @@ Every setting is written into the file on first run. Edits apply while the game 
 | `stereo_mode` | 1 | 1: both eyes every frame. 0: eyes take turns (faster, animation ghosts) |
 | `hud_distance` / `hud_width` / `hud_height` | 1 / 1.4 / -0.1 | HUD panel placement, in metres |
 | `hud_visible` | 1 | HUD panel on / off |
-| `hud_depth` | 1 | 3D notes |
+| `hud_depth` | 1 | 3D notes, UI panels, etc |
+| `hud_depth_area` | 0.74 | How much of the screen's width (centred) HUD pieces can go 3D in; wider costs a little more performance. Restart to apply |
 | `hud_gem_bulge` | 0.02 | How far the notes come out (negative turns them inside out) |
 | `mirror_hud` | 1 | HUD on the monitor. 0: hidden. 1: flat on top. 2: floating like in the headset |
 | `mirror_mode` | 1 | Eye view on the monitor. 0: stretch. 1: crop to fill. 2: fit |
