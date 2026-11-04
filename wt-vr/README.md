@@ -89,14 +89,15 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 
 ## Planned
 
+- Make HUD follow look direction slowly (configurable)
 - Reading more of the game's state directly instead of guessing from what's drawn:
   - song playing / intro / paused / ended
   - which players are active in multiplayer
   - lefty flip
 - 3D notes on player 1's highway in multiplayer.
-- Height maps for the strikeline and flames.
+- Height maps for the more of the HUD (e.g. strikeline, flames, rock meter)
 - Saved spots keyed by venue, not by start camera.
-- Performance: a VR resolution setting, uploading frames on a background thread, drawing shadow maps once.
+- Performance: a VR resolution setting, uploading frames on a background thread, drawing shadow maps once, other optimisations.
 - A settings editor.
 - Better method for band member mode 2 (editing meshes and animations directly, syncing guitar to tilt sensor for fake tracking)
 
