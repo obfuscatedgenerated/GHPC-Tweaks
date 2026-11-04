@@ -71,7 +71,6 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - Drums and vocals:
   - Auto spot for the drummer. Their place is found as the centre band member behind the singer, which hasn't been checked.
   - 3D notes on the drum highway.
-  - The vocals HUD.
 - Venues with no real stage, only a backdrop. A song is now also recognised by notes coming down the highway, but it's unconfirmed. Check the difficulty select screen isn't mistaken for a song, since it shows a highway too.
 - Height maps for HUD pieces other than notes: the loader is in place, but no maps exist yet.
 - Other GHWT builds and executables (e.g. Definitive Edition), and other screen resolutions. It was developed at 3840×2160, windowed. Its HUD measurements scale to the screen, but that's unchecked.
@@ -86,6 +85,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - **Open notes don't look very 3D.** The trick shifts each eye's image sideways, and a long horizontal bar has almost nothing for that to show. Only the rounded ends really pop. Raise `[depth]` for those textures if you want more.
 - **The notes going flat under menus is a guess:** "something big drawn over the highway". A large effect over the highway could flatten them briefly.
 - **Performance:** everything is drawn twice. If it's slow, lower `render_scale` or try `stereo_mode=0`.
+- Vocals camera controller doesn't start, so camera angle changes often without culling prevention
 
 ## Planned
 
