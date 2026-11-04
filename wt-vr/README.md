@@ -86,6 +86,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - **The notes going flat under menus is a guess:** "something big drawn over the highway". A large effect over the highway could flatten them briefly.
 - **Performance:** everything is drawn twice. If it's slow, lower `render_scale` or try `stereo_mode=0`.
 - Vocals camera controller doesn't start, so camera angle changes often without culling prevention
+- `save_textures=1` only works in VR (because it's implemented in the heightmap pipeline)
 
 ## Planned
 
