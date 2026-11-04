@@ -88,6 +88,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - Vocals camera controller doesn't start, so camera angle changes often without culling prevention
 - `save_textures=1` only works in VR (because it's implemented in the heightmap pipeline)
 - Band members occasionally change to chrome shading from camera LOD
+- Recording studio venue is aggressively culled, ignoring the camera controller
 
 ## Planned
 
