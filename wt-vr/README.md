@@ -90,6 +90,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 ## Planned
 
 - Make HUD follow look direction slowly (configurable)
+- Highway transparency option for more immersion
 - Reading more of the game's state directly instead of guessing from what's drawn:
   - song playing / intro / paused / ended
   - which players are active in multiplayer
