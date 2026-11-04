@@ -148,6 +148,7 @@ Every setting is written into the file on first run. Edits apply while the game 
 | `hud_visible` | 1 | HUD panel on / off |
 | `hud_depth` | 1 | 3D notes, UI panels, etc |
 | `hud_depth_area` | 0.74 | How much of the screen's width (centred) HUD pieces can go 3D in; wider costs a little more performance. Restart to apply |
+| `hud_depth_tracking` | 2 | 3D HUD depth: 0 fixed per-eye offset, 1 follows your eyes (tilt, lean, move) with every piece treated as straight ahead (calmer), 2 also as seen from off to the side, like real raised pieces |
 | `hud_gem_bulge` | 0.02 | How far the notes come out (negative turns them inside out) |
 | `mirror_hud` | 1 | HUD on the monitor. 0: hidden. 1: flat on top. 2: floating like in the headset |
 | `mirror_mode` | 1 | Eye view on the monitor. 0: stretch. 1: crop to fill. 2: fit |
@@ -230,6 +231,7 @@ The CI builds with MinGW on every push. Version tags publish a release containin
 | `settings.*` | `vr.ini`: one table of every setting drives loading, saving, logging and reloading |
 | `input.*` | Hotkeys and their `[keys]` bindings |
 | `hud_relief.*` | Height maps: texture names, loading `.bmp`s, the 3D copies of pixel shaders |
+| `hud_padding.*` | 3D HUD: pads sprite quads so raised parts can reach past their outline |
 | `stereo_targets.*` | Right-eye copies of the game's screen-sized render targets |
 | `camera_scan.*` | Finding the game's own camera in memory (for head follow) |
 | `mesh_watch.*` | Reading posed vertices (band members are posed on the CPU) |

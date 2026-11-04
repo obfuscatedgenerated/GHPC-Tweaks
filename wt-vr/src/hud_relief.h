@@ -13,6 +13,12 @@
 //   mad   r30.xy, r31.x, c222, uv (uv + height * this eye's shift)
 //   mov   r30.zw, uv.zw / c221    (kept, or 0 if the shader only has uv.xy)
 // and those reads use r30 instead. s15, c221-c223, r30 and r31 are unused by GHWT's HUD shaders.
+//
+// For ps_3_0 shaders that leave r27-r29, c219 and c220 free, the copy ray-marches instead: it steps along
+// the eye's view through the height map (uv + t * shift, t from 0 to 1, RayMarchSteps steps) and reads at
+// the highest point where the surface meets the ray, so a raised part can be drawn past its flat outline
+// (the caller pads the quad to make room). Whatever ends up read outside the piece's own frame of the
+// texture (c220: u min, v min, u max, v max) comes out transparent, so sprite sheets don't bleed.
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -23,7 +29,7 @@
 
 namespace Relief {
     constexpr DWORD HeightSampler = 15;
-    constexpr UINT  ZeroRegister = 221, ShiftRegister = 222, BrightnessRegister = 223;
+    constexpr UINT  FrameRegister = 220, ZeroRegister = 221, ShiftRegister = 222, BrightnessRegister = 223;
 
     using CreatePixelShaderFunction = HRESULT (STDMETHODCALLTYPE*)(IDirect3DDevice9*, const DWORD*, IDirect3DPixelShader9**);
 
@@ -34,6 +40,8 @@ namespace Relief {
     void NotePixelShader(IDirect3DPixelShader9* shader, const DWORD* tokens, uint32_t hash);
     // The 3D copy of a pixel shader (made the first time it's asked for); null if it can't be made.
     IDirect3DPixelShader9* ReliefShader(IDirect3DDevice9* device, IDirect3DPixelShader9* shader);
+    // Its 3D copy ray-marches (and so wants c220 set, and gains from a padded quad).
+    bool RayMarches(IDirect3DPixelShader9* shader);
 
     struct Texture {
         std::string name;                       // empty: its contents couldn't be read

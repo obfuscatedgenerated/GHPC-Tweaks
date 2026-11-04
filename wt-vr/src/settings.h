@@ -15,7 +15,8 @@ struct VrSettings {
     bool  showOverlay = true;
     bool  hudDepth    = true;   // 3D gems in songs: each gem bulges by its height map (hud_depth)
     float hudDepthArea = 0.74f; // hud_depth_area: middle fraction of the screen's width where HUD pieces can go 3D (restart to apply; wider costs more copying)
-    float hudGemBulge = 0.02f;  // 3D HUD: how far each gem's top bulges, as a fraction of a gem's width per eye (negative flips it)
+    float hudGemBulge = 0.02f;
+    int   hudDepthTracking = 2; // hud_depth_tracking: 0 fixed per-eye offset (3D-glasses style), 1 follows your eyes (tilt, lean, move) as if every piece were straight ahead, 2 also as seen from off to the side (pieces away from the middle shift as real raised ones would)  // 3D HUD: how far each gem's top bulges, as a fraction of a gem's width per eye (negative flips it)
     int   mirrorHud   = 1;      // monitor HUD: 0 hidden, 1 flat on top (good for playing), 2 floating in place like the headset
     bool  crowdFollow = true;   // crowd sprites face the way they would from where you stand (not the scripted shot)
     int   bandMemberMode = 1;   // the band member you stand in: 0 left alone, 1 hidden, 2 you become them (Shift+H)

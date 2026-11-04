@@ -42,6 +42,7 @@ std::vector<SettingInfo>& SettingTable() {
         { "vr", "hud_height",         SettingType::Float, &g_settings.overlay.height,    -5.0f, 5.0f, false, {} },
         { "vr", "hud_depth",          SettingType::Bool,  &g_settings.hudDepth,          0, 1, false, {} },
         { "vr", "hud_depth_area",     SettingType::Float, &g_settings.hudDepthArea,      0.2f, 1.0f,  true,  {} },
+        { "vr", "hud_depth_tracking", SettingType::Int,   &g_settings.hudDepthTracking,  0, 2,     false, {} },
         { "vr", "hud_gem_bulge",      SettingType::Float, &g_settings.hudGemBulge,       -0.2f, 0.2f, false, {} },
         { "vr", "mirror_hud",         SettingType::Int,   &g_settings.mirrorHud,         0, 2, false, {} },
         { "vr", "mirror_mode",        SettingType::Int,   &g_settings.mirrorMode,        0, 2, false, {} },

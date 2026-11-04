@@ -22,11 +22,47 @@ struct PixelShaderRecord {
     uint32_t hash = 0;
     IDirect3DPixelShader9* relief = nullptr;
     bool reliefTried = false;
+    bool rayMarches = false;   // the 3D copy is the ray-marched kind (else one height read per pixel)
 };
 std::unordered_map<IDirect3DPixelShader9*, PixelShaderRecord> g_pixelShaders;
 std::unordered_map<IDirect3DBaseTexture9*, Relief::Texture> g_textures;
 
-std::vector<DWORD> PatchPixelShader(const DWORD* tokens) {
+constexpr int RayMarchSteps = 16;
+
+DWORD FloatBits(float value) { DWORD bits; memcpy(&bits, &value, 4); return bits; }
+
+// Does the shader already use any of the registers the ray march adds (r27-r29, c219, c220)?
+bool UsesRayMarchRegisters(const DWORD* tokens) {
+    auto registerType = [](DWORD parameter) { return ((parameter >> 28) & 7) | ((parameter >> 8) & 0x18); };
+    for (size_t index = 1; index < (1u << 16) && tokens[index] != EndToken;) {
+        const DWORD token = tokens[index];
+        if ((token & 0xFFFF) == 0xFFFE) { index += 1 + ((token >> 16) & 0x7FFF); continue; }
+        const DWORD opcode = token & 0xFFFF, length = (token >> 24) & 0xF;
+        // dcl: its first parameter is a usage token, not a register. def: only its first is a register.
+        const size_t firstParameter = opcode == 0x1F ? 2 : 1, lastParameter = opcode == 0x51 ? 1 : length;
+        for (size_t parameter = firstParameter; parameter <= lastParameter; ++parameter) {
+            const DWORD value = tokens[index + parameter];
+            if (!(value & 0x80000000)) continue;
+            const DWORD type = registerType(value), number = value & 0x7FF;
+            if ((type == 0 && number >= 27 && number <= 29) || (type == 2 && (number == 219 || number == 220))) return true;
+        }
+        index += 1 + length;
+    }
+    return false;
+}
+
+// ps_3_0 reads at most one constant register per instruction, so each added instruction uses one; and
+// GHWT's runtime refuses sub in ps_3_0 (found by the refusal search below), so it's add with a negated input.
+//
+// rayMarch (ps_3_0 only): instead of one read of the height at the pixel itself, steps along this eye's
+// view (uv + t * shift, t from 0 to 1) and takes the highest point where the surface is at or above the
+// ray - so a raised part can be drawn past its flat outline (the quad is padded for room), and what's
+// read outside the piece's own frame (c220: u, v min / max) comes out transparent.
+// Diagnostics: keepInstructions < all keeps only that many of the ray march's added instructions (then
+// takes the plain uv, unmasked), to find which one a refused copy trips over.
+constexpr size_t AllInstructions = ~size_t(0);
+
+std::vector<DWORD> PatchPixelShader(const DWORD* tokens, bool rayMarch, size_t keepInstructions = AllInstructions) {
     // GHWT's gem shaders layer several textures (s0 cap / ring, s1, s2) read with the same uv: each
     // read at that uv gets the height-shifted uv instead, so all the layers bulge together. Reads at
     // other coordinates (e.g. an animated colour ramp) are left alone. Plain sprite shaders (one
@@ -69,24 +105,75 @@ std::vector<DWORD> PatchPixelShader(const DWORD* tokens) {
     }
     const DWORD coordinateXy = (coordinate & 0xF0001FFF) | (0x54u << 16);   // uv.xyyy
     const DWORD coordinateAll = (coordinate & 0xF0001FFF) | (0xE4u << 16);  // uv.xyzw
-    const DWORD shiftedCoordinate[] = { 0x03000042, 0x800F001F, coordinateAll, 0xA0E4080F,            // texld r31, uv, s15
-                                        0x03000008, 0x8001001F, 0x80E4001F, 0xA0E400DF,               // dp3 r31.x, r31, c223
-                                        0x04000004, 0x8003001E, 0x8000001F, 0xA0E400DE, coordinateXy,  // mad r30.xy, r31.x, c222, uv.xy
-                                        0x02000001, 0x800C001E, coordinateHasZw ? coordinateAll : 0xA0E400DDu };   // mov r30.zw, uv.zw (or c221: 0)
+    const DWORD keepZw = coordinateHasZw ? coordinateAll : 0xA0E400DDu;      // uv.zw (or c221: 0)
+
+    std::vector<DWORD> shiftedCoordinate;
+    if (!rayMarch) {
+        shiftedCoordinate = { 0x03000042, 0x800F001F, coordinateAll, 0xA0E4080F,            // texld r31, uv, s15
+                              0x03000008, 0x8001001F, 0x80E4001F, 0xA0E400DF,               // dp3 r31.x, r31, c223
+                              0x04000004, 0x8003001E, 0x8000001F, 0xA0E400DE, coordinateXy,  // mad r30.xy, r31.x, c222, uv.xy
+                              0x02000001, 0x800C001E, keepZw };                              // mov r30.zw, uv.zw
+    } else {
+        shiftedCoordinate = { 0x02000001, 0x8003001C, coordinateXy,                          // mov r28.xy, uv        (hit so far: the base)
+                              0x02000001, 0x8004001C, 0xA0E400DD,                            // mov r28.z, c221       (t = 0)
+                              0x02000001, 0x800C001D, 0xA0E400DD };                          // mov r29.zw, c221
+        for (int step = 0; step < RayMarchSteps; ++step) {
+            const DWORD stepTokens[] = {
+                0x03000002, 0x8004001C, 0x80AA001C, 0xA00000DB,                // add r28.z, r28.z, c219.x      (t += 1 / steps)
+                0x04000004, 0x8003001B, 0x80AA001C, 0xA0E400DE, coordinateXy,  // mad r27.xy, t, c222, uv       (the ray at height t)
+                0x0300000B, 0x8003001D, 0x80E4001B, 0xA0E400DC,                // max r29.xy, r27, c220         (kept in the frame
+                0x0300000A, 0x8003001D, 0x80E4001D, 0xA0EE00DC,                // min r29.xy, r29, c220.zw       for the height read)
+                0x03000042, 0x800F001F, 0x80E4001D, 0xA0E4080F,                // texld r31, r29, s15
+                0x03000008, 0x8001001F, 0x80E4001F, 0xA0E400DF,                // dp3 r31.x, r31, c223          (height there)
+                0x03000002, 0x8001001F, 0x8000001F, 0x81AA001C,                // add r31.x, height, -t
+                0x04000058, 0x8003001C, 0x8000001F, 0x80E4001B, 0x80E4001C };  // cmp r28.xy: surface at or above the ray -> hit
+            shiftedCoordinate.insert(shiftedCoordinate.end(), std::begin(stepTokens), std::end(stepTokens));
+        }
+        const DWORD finish[] = {
+            0x02000001, 0x8003001E, 0x80E4001C,                          // mov r30.xy, r28 (the highest hit)
+            0x02000001, 0x800C001E, keepZw,                              // mov r30.zw, uv.zw
+            0x03000002, 0x8003001D, 0x80E4001E, 0xA1E400DC,              // add r29.xy, r30, -c220        (>= 0: past the minimum
+            0x03000002, 0x800C001D, 0xA0E400DC, 0x8144001E,              // add r29.zw, c220, -r30.xyxy    and short of the maximum)
+            0x0300000A, 0x8003001D, 0x80E4001D, 0x80EE001D,              // min r29.xy, r29, r29.zwzw
+            0x0300000A, 0x8001001D, 0x8000001D, 0x8055001D,              // min r29.x, r29.x, r29.y
+            0x04000058, 0x8001001D, 0x8000001D, 0xA05500DB, 0xA0AA00DB }; // cmp r29.x: inside -> 1 (c219.y), else 0 (c219.z)
+        shiftedCoordinate.insert(shiftedCoordinate.end(), std::begin(finish), std::end(finish));
+        if (keepInstructions != AllInstructions) {
+            size_t offset = 0;
+            for (size_t kept = 0; kept < keepInstructions && offset < shiftedCoordinate.size(); ++kept)
+                offset += 1 + ((shiftedCoordinate[offset] >> 24) & 0xF);
+            shiftedCoordinate.resize(offset);
+            const DWORD plain[] = { 0x02000001, 0x8003001E, coordinateXy, 0x02000001, 0x800C001E, keepZw };   // r30 = uv
+            shiftedCoordinate.insert(shiftedCoordinate.end(), std::begin(plain), std::end(plain));
+        }
+    }
+
     result.push_back(tokens[0]);
     const DWORD declareHeightSampler[] = { 0x0200001F, 0x90000000, 0xA00F080F };   // dcl_2d s15
     result.insert(result.end(), declareHeightSampler, declareHeightSampler + 3);
+    if (rayMarch) {
+        const DWORD defineSteps[] = { 0x05000051, 0xA00F00DB, FloatBits(1.0f / RayMarchSteps), FloatBits(1.0f), 0, 0 };   // def c219, 1/steps, 1, 0, 0
+        result.insert(result.end(), std::begin(defineSteps), std::end(defineSteps));
+    }
     result.insert(result.end(), tokens + 1, tokens + firstRead);
     // An input never changes: work it out once. A temp may be rewritten between reads: before each one.
-    if (coordinateType == InputRegister) result.insert(result.end(), std::begin(shiftedCoordinate), std::end(shiftedCoordinate));
+    if (coordinateType == InputRegister) result.insert(result.end(), shiftedCoordinate.begin(), shiftedCoordinate.end());
     for (size_t index = firstRead; index < end;) {
         const DWORD token = tokens[index];
         const size_t length = (token & 0xFFFF) == 0xFFFE ? ((token >> 16) & 0x7FFF) : ((token >> 24) & 0xF);
         const bool redirected = (token & 0xFFFF) != 0xFFFE && isPlainTextureRead(index) && sameRegister(tokens[index + 2]);
-        if (redirected && coordinateType == TempRegister) result.insert(result.end(), std::begin(shiftedCoordinate), std::end(shiftedCoordinate));
+        if (redirected && coordinateType == TempRegister) result.insert(result.end(), shiftedCoordinate.begin(), shiftedCoordinate.end());
         const size_t first = result.size();
         result.insert(result.end(), tokens + index, tokens + index + 1 + length);
-        if (redirected) result[first + 2] = (tokens[index + 2] & 0x00FF0000) | 0x8000001E;   // this read now uses r30 (same swizzle)
+        if (redirected) {
+            result[first + 2] = (tokens[index + 2] & 0x00FF0000) | 0x8000001E;   // this read now uses r30 (same swizzle)
+            if (rayMarch && keepInstructions == AllInstructions) {   // mul <read>, <read>, r29.x: nothing from outside the frame
+                const DWORD destination = tokens[index + 1] & ~0x00F00000u;   // without _sat etc.
+                const DWORD source = (destination & 0xF0001FFF) | (0xE4u << 16);
+                const DWORD mask[] = { 0x03000005, destination, source, 0x8000001D };
+                result.insert(result.end(), std::begin(mask), std::end(mask));
+            }
+        }
         index += 1 + length;
     }
     result.push_back(EndToken);
@@ -275,21 +362,79 @@ void NotePixelShader(IDirect3DPixelShader9* shader, const DWORD* tokens, uint32_
     record.hash = hash;
 }
 
+// A refused ray-marched copy: which added instruction is the problem? Tries copies keeping fewer and
+// fewer of them (a binary search) and logs the first one that gets it refused, as its raw tokens.
+static void DiagnoseRefusal(IDirect3DDevice9* device, const DWORD* tokens, uint32_t hash) {
+    auto accepted = [&](size_t keep) {
+        const std::vector<DWORD> patched = PatchPixelShader(tokens, true, keep);
+        IDirect3DPixelShader9* shader = nullptr;
+        if (patched.empty() || FAILED(g_createPixelShader(device, patched.data(), &shader)) || !shader) return false;
+        shader->Release();
+        return true;
+    };
+    if (!accepted(0)) { LogLine("[3d hud]   %08X: refused even with none of the ray march (its def / dcl?)", hash); return; }
+    // How many instructions the ray march adds (counted from a full build's difference isn't needed:
+    // keep growing until the whole list is in).
+    size_t good = 0, bad = 1;
+    while (accepted(bad)) {
+        good = bad;
+        bad *= 2;
+        if (bad > 4096) { LogLine("[3d hud]   %08X: every part is accepted alone - the frame mask (mul after reads) is refused", hash); return; }
+    }
+    while (bad - good > 1) {
+        const size_t middle = (good + bad) / 2;
+        if (accepted(middle)) good = middle; else bad = middle;
+    }
+    // The instruction at index good (0-based) of the added list: rebuild and print it.
+    const std::vector<DWORD> withIt = PatchPixelShader(tokens, true, bad), without = PatchPixelShader(tokens, true, good);
+    size_t first = 0;
+    while (first < without.size() && first < withIt.size() && without[first] == withIt[first]) ++first;
+    char text[160];
+    int length = snprintf(text, sizeof(text), "[3d hud]   %08X: refused from added instruction %zu:", hash, good);
+    for (size_t index = first; index < withIt.size() && index < first + 6 && length < int(sizeof(text)) - 10; ++index)
+        length += snprintf(text + length, sizeof(text) - length, " %08lX", withIt[index]);
+    LogLine("%s", text);
+}
+
 IDirect3DPixelShader9* ReliefShader(IDirect3DDevice9* device, IDirect3DPixelShader9* shader) {
     auto found = g_pixelShaders.find(shader);
     if (found == g_pixelShaders.end()) return nullptr;
     PixelShaderRecord& record = found->second;
     if (record.reliefTried) return record.relief;
     record.reliefTried = true;
-    const std::vector<DWORD> patched = PatchPixelShader(record.bytecode.data());
-    if (!patched.empty() && g_createPixelShader && SUCCEEDED(g_createPixelShader(device, patched.data(), &record.relief)) && record.relief) {
-        LogLine("[3d hud] made a 3D copy of pixel shader %08X", record.hash);
+    const DWORD* tokens = record.bytecode.data();
+    // The ray march needs ps_3_0 (instruction count) and its extra registers free; else the simple kind.
+    const bool canRayMarch = tokens[0] == 0xFFFF0300 && !UsesRayMarchRegisters(tokens);
+    char whySimple[96] = "";
+    if (tokens[0] != 0xFFFF0300) snprintf(whySimple, sizeof(whySimple), "shader version %08lX isn't ps_3_0", tokens[0]);
+    else if (!canRayMarch) snprintf(whySimple, sizeof(whySimple), "it already uses r27-r29 / c219 / c220");
+    std::vector<DWORD> patched = PatchPixelShader(tokens, canRayMarch);
+    record.rayMarches = canRayMarch;
+    if (canRayMarch && !patched.empty() && g_createPixelShader) {
+        const HRESULT created = g_createPixelShader(device, patched.data(), &record.relief);
+        if (FAILED(created)) {
+            snprintf(whySimple, sizeof(whySimple), "the ray-marched copy was refused (%08lX)", created);
+            DiagnoseRefusal(device, tokens, record.hash);
+            record.relief = nullptr;
+            patched = PatchPixelShader(tokens, false);
+            record.rayMarches = false;
+        }
+    }
+    if (!patched.empty() && g_createPixelShader && (record.relief || SUCCEEDED(g_createPixelShader(device, patched.data(), &record.relief))) && record.relief) {
+        LogLine("[3d hud] made a 3D copy of pixel shader %08X (%s)", record.hash,
+                record.rayMarches ? "ray-marched: raised parts can reach past the outline" : "simple: one height read per pixel");
+        if (!record.rayMarches) LogLine("[3d hud]   not ray-marched: %s", whySimple);
     } else {
         record.relief = nullptr;
         LogLine("[3d hud] couldn't make a 3D copy of pixel shader %08X (%s): what it draws stays flat", record.hash,
                 patched.empty() ? "no texture read from s0 found" : "the copy was refused");
     }
     return record.relief;
+}
+
+bool RayMarches(IDirect3DPixelShader9* shader) {
+    auto found = g_pixelShaders.find(shader);
+    return found != g_pixelShaders.end() && found->second.relief && found->second.rayMarches;
 }
 
 const Texture& TextureFor(IDirect3DDevice9* device, IDirect3DBaseTexture9* baseTexture, IDirect3DBaseTexture9* const layers[2]) {

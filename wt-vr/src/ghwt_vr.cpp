@@ -38,6 +38,7 @@
 #include "settings.h"
 #include "input.h"
 #include "hud_relief.h"
+#include "hud_padding.h"
 
 #ifndef WTVR_VERSION
 #define WTVR_VERSION "dev"   // the build sets it (the release tag)
@@ -713,6 +714,9 @@ static void NoteCharacterDraw(const ShaderInfo& shader);
 static bool    g_currentDrawIsAvatar = false;   // this draw is part of your band member, placed under you
 static const void* g_upVertexData = nullptr;    // DrawPrimitiveUP / DIPUP: the vertices
 static UINT    g_upStride = 0;
+static UINT    g_upPrimitiveCount = 0;          // ...its primitive count
+static const void* g_upIndexData = nullptr;     // DIPUP: its indices (null: DrawPrimitiveUP)
+static D3DFORMAT g_upIndexFormat = D3DFMT_INDEX16;
 static UINT    g_drawFirstVertex = 0;           // vertex buffer draws: which vertices this draw uses
 static UINT    g_drawVertexCount = 0;
 static D3DPRIMITIVETYPE g_drawPrimitiveType = D3DPT_TRIANGLELIST;
@@ -851,6 +855,7 @@ constexpr int HudLayerCount = 2;
 static float GemArea[4] = { 0.13f, 0.17f, 0.87f, 0.98f };
 static IDirect3DTexture9* g_hudLayerTextures[HudLayerCount] = {};
 static IDirect3DSurface9* g_hudLayerSurfaces[HudLayerCount] = {};
+static std::vector<BYTE> g_paddedHudVertices;   // a 3D HUD piece's quads, padded (kept to reuse the memory)
 static bool g_hudLayerCleared[HudLayerCount] = {};
 static bool g_hudLayerDrawn[HudLayerCount] = {};
 // Something drawn over the highway after the gems (the pause menu): the gem panels are in front of the
@@ -1002,6 +1007,31 @@ static HRESULT DrawIntoOverlayTarget(IDirect3DDevice9* device, IDirect3DSurface9
     return result;
 }
 
+// 3D HUD relief, hud_depth_tracking: which way (and how far) one eye sees a raised piece's top shifted,
+// from where that eye really is. A point raised above the panel, seen from the eye, lands on the panel
+// moved away from the eye by (piece - eye) * height / distance, so the texture is read the other way.
+// Scaled so that an eye straight ahead at half a typical IPD, at hud_distance, gives the fixed offset
+// (direction ±1, 0): tilting your head turns it, leaning in grows it, moving changes it. Mode 1 measures
+// the piece as if it were straight ahead of your recentred head (both eyes' shared shift for pieces off
+// to the side left out - it's the same in both eyes, so not depth, just the calmer look); mode 2 (the
+// default) keeps it, as real raised pieces would look - the ray march and padded quads give it room.
+static void ReliefViewDirection(int eye, float centreX, float centreY, float direction[2]) {
+    if (g_settings.hudDepthTracking == 0 || !g_xr.IsRunning() || !g_backBufferWidth || !g_backBufferHeight) return;
+    const XrVector3f eyePosition = g_xr.CurrentView(eye).pose.position;   // anchor space, like the HUD panel
+    const OverlayPlacement& panel = g_settings.overlay;
+    const float panelHeight = panel.width * float(g_backBufferHeight) / float(g_backBufferWidth);
+    float pieceX = 0.0f, pieceY = 0.0f;   // mode 1: straight ahead of the recentred head
+    if (g_settings.hudDepthTracking == 2) {
+        pieceX = (centreX / float(g_backBufferWidth) - 0.5f) * panel.width;
+        pieceY = panel.height + (0.5f - centreY / float(g_backBufferHeight)) * panelHeight;
+    }
+    const float eyeDistance = std::max(0.05f, eyePosition.z + panel.distance);
+    constexpr float HalfIpd = 0.0315f;
+    const float scale = panel.distance / HalfIpd / eyeDistance;
+    direction[0] = -(pieceX - eyePosition.x) * scale;
+    direction[1] = (pieceY - eyePosition.y) * scale;   // texture v runs down, the panel's y up
+}
+
 // A HUD piece split between the flat HUD and the 3D panels: its part outside the panels' area onto the
 // flat HUD, in up to four scissored strips around the area (left, right, above, below).
 template <typename DrawCall>
@@ -1115,6 +1145,7 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
                                              overlapWidth * overlapHeight / std::max(1.0f, (areaRight - areaLeft) * (areaBottom - areaTop)));
     }
     const HudPiece piece = onPanels ? HudPiece::Gem : HudPiece::Highway;
+    char reliefNote[160] = "";   // HUD dump: how a 3D piece's relief was drawn
     HRESULT result;
     const bool gemPanels = piece == HudPiece::Gem && layeredHud &&
                            CreateOverlayTarget(device, g_hudLayerTextures[0], g_hudLayerSurfaces[0]) &&
@@ -1145,18 +1176,67 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
             g_originalSetPixelShaderConstantF(device, Relief::BrightnessRegister, brightness, 1);
             g_originalSetPixelShader(device, reliefShader);
         }
+        // The same in texels down as across (the height maps' depth is in texels of the texture).
+        const float frameScaleY = (textureDescription.Height ? 128.0f / float(textureDescription.Height) : 1.0f) *
+                                  (reliefTexture ? reliefTexture->strength : 1.0f);
+        // Each eye's shift: nearer = the left eye sees it further right, so it reads the texture further
+        // left (u - shift).
+        float directions[2][2] = { { -1.0f, 0.0f }, { 1.0f, 0.0f } };
+        if (reliefShader && haveBounds)
+            for (int eye = 0; eye < 2; ++eye) ReliefViewDirection(eye, (drawLeft + drawRight) / 2, (drawTop + drawBottom) / 2, directions[eye]);
+        // Only the shift both eyes share is limited (it's what reads far outside the piece); the difference
+        // between them is the depth, so it's kept.
+        constexpr float SharedLimit = 8.0f;
+        for (int axis = 0; axis < 2; ++axis) {
+            const float shared = (directions[0][axis] + directions[1][axis]) / 2;
+            const float limited = std::clamp(shared, -SharedLimit, SharedLimit);
+            directions[0][axis] += limited - shared;
+            directions[1][axis] += limited - shared;
+        }
+        float shifts[2][4] = {};
+        for (int eye = 0; eye < 2; ++eye) {
+            shifts[eye][0] = directions[eye][0] * g_settings.hudGemBulge * frameScale;
+            shifts[eye][1] = directions[eye][1] * g_settings.hudGemBulge * frameScaleY;
+        }
+        // Ray-marched: the piece's own frame of its texture (nothing read past it shows), and its quads
+        // padded by the biggest shift so a raised part has room past the flat outline.
+        std::vector<BYTE>& paddedVertices = g_paddedHudVertices;
+        bool padded = false;
+        if (reliefShader && Relief::RayMarches(g_currentPixelShader)) {
+            float frame[4] = { -1e4f, -1e4f, 1e4f, 1e4f };   // unknown: no limit
+            if (g_upVertexData) {
+                const HudPadding::Draw upDraw = { g_drawPrimitiveType, g_upVertexData, g_upStride, g_drawFirstVertex, g_drawVertexCount,
+                                                  g_upPrimitiveCount, g_upIndexData, g_upIndexFormat };
+                if (!HudPadding::FrameOf(device, upDraw, frame)) frame[0] = frame[1] = -1e4f, frame[2] = frame[3] = 1e4f;
+                const float marginU = std::max(std::fabs(shifts[0][0]), std::fabs(shifts[1][0]));
+                const float marginV = std::max(std::fabs(shifts[0][1]), std::fabs(shifts[1][1]));
+                padded = HudPadding::PadQuads(device, upDraw, marginU, marginV, paddedVertices);
+            }
+            g_originalSetPixelShaderConstantF(device, Relief::FrameRegister, frame, 1);
+        }
+        if (g_logHudDrawsThisFrame && reliefShader)
+            snprintf(reliefNote, sizeof(reliefNote), ", relief %s, %s, %s %u, shift L %.4f %.4f R %.4f %.4f",
+                     Relief::RayMarches(g_currentPixelShader) ? "ray-marched" : "simple", padded ? "padded" : "not padded",
+                     g_upIndexData ? "indexed" : "type", g_upIndexData ? 0u : unsigned(g_drawPrimitiveType),
+                     shifts[0][0], shifts[0][1], shifts[1][0], shifts[1][1]);
+        else if (g_logHudDrawsThisFrame && (gem || raisedPiece))
+            snprintf(reliefNote, sizeof(reliefNote), ", relief none (%s)", reliefTexture && reliefTexture->height ? "no 3D shader copy" : "no height map");
+        const auto paddedDraw = [&]() {
+            return g_upIndexData ? g_originalDrawIndexedPrimitiveUP(device, g_drawPrimitiveType, g_drawFirstVertex, g_drawVertexCount, g_upPrimitiveCount,
+                                                                   g_upIndexData, g_upIndexFormat, paddedVertices.data(), g_upStride)
+                                 : g_originalDrawPrimitiveUP(device, g_drawPrimitiveType, g_upPrimitiveCount, paddedVertices.data(), g_upStride);
+        };
         result = S_OK;
         for (int eye = 0; eye < 2; ++eye) {
-            // Nearer = the left eye sees it further right: read the texture further left (u - shift).
-            const float shift[4] = { (eye == 0 ? -1.0f : 1.0f) * g_settings.hudGemBulge * frameScale, 0.0f, 0.0f, 0.0f };
-            if (reliefShader) g_originalSetPixelShaderConstantF(device, Relief::ShiftRegister, shift, 1);
-            const HRESULT eyeResult = DrawIntoOverlayTarget(device, g_hudLayerSurfaces[eye], g_hudLayerCleared[eye], gameViewport, draw);
+            if (reliefShader) g_originalSetPixelShaderConstantF(device, Relief::ShiftRegister, shifts[eye], 1);
+            const HRESULT eyeResult = padded ? DrawIntoOverlayTarget(device, g_hudLayerSurfaces[eye], g_hudLayerCleared[eye], gameViewport, paddedDraw)
+                                             : DrawIntoOverlayTarget(device, g_hudLayerSurfaces[eye], g_hudLayerCleared[eye], gameViewport, draw);
             if (eye == 0) result = eyeResult;
             g_hudLayerDrawn[eye] = true;
         }
         if (reliefShader) {
             g_originalSetPixelShader(device, g_currentPixelShader);
-            g_originalSetPixelShaderConstantF(device, Relief::ZeroRegister, g_pixelConstants[Relief::ZeroRegister], 3);
+            g_originalSetPixelShaderConstantF(device, Relief::FrameRegister, g_pixelConstants[Relief::FrameRegister], 4);
             g_originalSetTexture(device, Relief::HeightSampler, g_boundTextures[Relief::HeightSampler]);
         }
         if (splitPiece) DrawOutsidePanelArea(device, gameViewport, draw);
@@ -1174,12 +1254,12 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
         DWORD sourceBlend = 0, destinationBlend = 0;
         device->GetRenderState(D3DRS_SRCBLEND, &sourceBlend);
         device->GetRenderState(D3DRS_DESTBLEND, &destinationBlend);
-        LogLine("[hud] VS %08X PS %08X %s texture %ux%u #%08X, %u vertices %s at %.0f %.0f (%s, blend %lu/%lu) -> %s%s", shader->hash,
+        LogLine("[hud] VS %08X PS %08X %s texture %ux%u #%08X, %u vertices %s at %.0f %.0f (%s, blend %lu/%lu) -> %s%s%s", shader->hash,
                 pixelShader != g_pixelShaders.end() ? pixelShader->second.hash : 0u, shader->isHighway ? "highway" : "other  ",
                 description.Width, description.Height, (g_settings.debugTools ? Relief::SaveTextureFile(texture) : 0u), g_drawVertexCount, g_upVertexData ? "(user pointer)" : "", place.centreX, place.centreY,
                 bounds, sourceBlend, destinationBlend,
                 gem ? "gem (3D)" : raisedPiece ? "raised (3D)" : coversPanelPiece ? "on the panels (covers 3D)" : splitPiece ? "split (covers 3D)" : "flat",
-                layeredHud ? "" : " (3D gems off)");
+                reliefNote, layeredHud ? "" : " (3D gems off)");
     }
     ++g_counters.overlayDraws;
 
@@ -3148,6 +3228,8 @@ static HRESULT STDMETHODCALLTYPE HookedDrawPrimitiveUP(IDirect3DDevice9* device,
     g_drawPrimitiveType = type;
     g_upVertexData = vertexData;
     g_upStride = stride;
+    g_upPrimitiveCount = primitiveCount;
+    g_upIndexData = nullptr;
     g_drawFirstVertex = 0;
     g_drawVertexCount = VerticesFor(type, primitiveCount);
     const HRESULT result = HandleDraw(device, [&]() { return g_originalDrawPrimitiveUP(device, type, primitiveCount, vertexData, stride); });
@@ -3159,6 +3241,9 @@ static HRESULT STDMETHODCALLTYPE HookedDrawIndexedPrimitiveUP(IDirect3DDevice9* 
     g_drawPrimitiveType = type;
     g_upVertexData = vertexData;
     g_upStride = stride;
+    g_upPrimitiveCount = primitiveCount;
+    g_upIndexData = indexData;
+    g_upIndexFormat = indexFormat;
     g_drawFirstVertex = minVertex;
     g_drawVertexCount = vertexCount;
     const HRESULT result = HandleDraw(device, [&]() {
