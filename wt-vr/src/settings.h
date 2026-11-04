@@ -14,6 +14,7 @@ struct VrSettings {
     OverlayPlacement overlay = { 1.0f, 1.4f, -0.1f };
     bool  showOverlay = true;
     bool  hudDepth    = true;   // 3D gems in songs: each gem bulges by its height map (hud_depth)
+    float hudDepthArea = 0.74f; // hud_depth_area: middle fraction of the screen's width where HUD pieces can go 3D (restart to apply; wider costs more copying)
     float hudGemBulge = 0.02f;  // 3D HUD: how far each gem's top bulges, as a fraction of a gem's width per eye (negative flips it)
     int   mirrorHud   = 1;      // monitor HUD: 0 hidden, 1 flat on top (good for playing), 2 floating in place like the headset
     bool  crowdFollow = true;   // crowd sprites face the way they would from where you stand (not the scripted shot)

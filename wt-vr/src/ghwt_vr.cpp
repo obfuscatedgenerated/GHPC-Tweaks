@@ -844,10 +844,11 @@ static bool g_overlayClearedThisFrame = false;
 static bool g_overlayDrawnThisFrame = false;
 // 3D gems (songs): two extra panels on top of the HUD panel, at the same distance - the left and the
 // right eye's gems, each gem drawn per eye with its own depth (see the gem relief below). They only
-// cover the highway's part of the screen (GemArea: left, top, right, bottom fractions), so copying
-// them to the headset costs well under half of a full panel.
+// cover the middle of the screen (GemArea: left, top, right, bottom fractions; hud_depth_area sets the
+// width, wide enough by default for the rock meter left of the highway), so copying them to the
+// headset costs less than a full panel. Only a HUD piece fully inside it can go 3D.
 constexpr int HudLayerCount = 2;
-constexpr float GemArea[4] = { 0.25f, 0.17f, 0.75f, 0.98f };
+static float GemArea[4] = { 0.13f, 0.17f, 0.87f, 0.98f };
 static IDirect3DTexture9* g_hudLayerTextures[HudLayerCount] = {};
 static IDirect3DSurface9* g_hudLayerSurfaces[HudLayerCount] = {};
 static bool g_hudLayerCleared[HudLayerCount] = {};
@@ -1001,6 +1002,36 @@ static HRESULT DrawIntoOverlayTarget(IDirect3DDevice9* device, IDirect3DSurface9
     return result;
 }
 
+// A HUD piece split between the flat HUD and the 3D panels: its part outside the panels' area onto the
+// flat HUD, in up to four scissored strips around the area (left, right, above, below).
+template <typename DrawCall>
+static void DrawOutsidePanelArea(IDirect3DDevice9* device, const D3DVIEWPORT9& gameViewport, DrawCall draw) {
+    DWORD scissorEnabled = FALSE;
+    device->GetRenderState(D3DRS_SCISSORTESTENABLE, &scissorEnabled);
+    RECT gameScissor;
+    device->GetScissorRect(&gameScissor);
+    const LONG screenWidth = LONG(g_backBufferWidth), screenHeight = LONG(g_backBufferHeight);
+    const LONG areaLeft = LONG(GemArea[0] * g_backBufferWidth), areaTop = LONG(GemArea[1] * g_backBufferHeight);
+    const LONG areaRight = LONG(GemArea[2] * g_backBufferWidth), areaBottom = LONG(GemArea[3] * g_backBufferHeight);
+    const RECT strips[4] = { { 0, 0, areaLeft, screenHeight }, { areaRight, 0, screenWidth, screenHeight },
+                             { areaLeft, 0, areaRight, areaTop }, { areaLeft, areaBottom, areaRight, screenHeight } };
+    device->SetRenderState(D3DRS_SCISSORTESTENABLE, TRUE);
+    for (const RECT& strip : strips) {
+        RECT clip = strip;   // screen pixels, like the game's scissor (DrawIntoOverlayTarget moves it in by the margin)
+        if (scissorEnabled) {
+            clip.left = std::max(clip.left, gameScissor.left);
+            clip.top = std::max(clip.top, gameScissor.top);
+            clip.right = std::min(clip.right, gameScissor.right);
+            clip.bottom = std::min(clip.bottom, gameScissor.bottom);
+        }
+        if (clip.right <= clip.left || clip.bottom <= clip.top) continue;
+        device->SetScissorRect(&clip);
+        DrawIntoOverlayTarget(device, g_overlaySurface, g_overlayClearedThisFrame, gameViewport, draw);
+    }
+    device->SetScissorRect(&gameScissor);
+    device->SetRenderState(D3DRS_SCISSORTESTENABLE, scissorEnabled);
+}
+
 template <typename DrawCall>
 static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const ShaderInfo* shader = nullptr) {
     if (!EnsureOverlayTarget(device)) return draw();
@@ -1060,12 +1091,22 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
     // wholly inside the panels' area.
     float drawLeft, drawTop, drawRight, drawBottom;
     const bool haveBounds = layeredHud && HudBounds(device, drawLeft, drawTop, drawRight, drawBottom);
-    const bool raisedPiece = !gem && reliefTexture && reliefTexture->height && haveBounds &&
-                             drawLeft >= GemArea[0] * g_backBufferWidth && drawRight <= GemArea[2] * g_backBufferWidth &&
-                             drawTop >= GemArea[1] * g_backBufferHeight && drawBottom <= GemArea[3] * g_backBufferHeight;
-    const bool onPanels = gem || raisedPiece;
+    const bool insidePanels = haveBounds && drawLeft >= GemArea[0] * g_backBufferWidth && drawRight <= GemArea[2] * g_backBufferWidth &&
+                              drawTop >= GemArea[1] * g_backBufferHeight && drawBottom <= GemArea[3] * g_backBufferHeight;
+    const bool raisedPiece = !gem && reliefTexture && reliefTexture->height && insidePanels;
+    // The panels are always shown on top of the flat HUD, so a flat piece drawn after something on the
+    // panels (the rock meter's face over its hidden star tubes, the score box over the combo meter) goes
+    // onto the panels too, flat, to keep covering it as the game drew it. One only partly inside (often a
+    // batch of HUD pieces in one draw, or one whose bounds can't be read) is split: on the panels whole,
+    // and on the flat HUD only outside the panels' area.
+    const bool outsidePanels = haveBounds && (drawRight <= GemArea[0] * g_backBufferWidth || drawLeft >= GemArea[2] * g_backBufferWidth ||
+                                              drawBottom <= GemArea[1] * g_backBufferHeight || drawTop >= GemArea[3] * g_backBufferHeight);
+    const bool overPanelPiece = !gem && !raisedPiece && layeredHud && !outsidePanels && g_gemsCoveredFrames == 0 && g_hudLayerDrawn[0];
+    const bool coversPanelPiece = overPanelPiece && insidePanels;
+    const bool splitPiece = overPanelPiece && !insidePanels;
+    const bool onPanels = gem || raisedPiece || overPanelPiece;
     // Flat draws after this frame's gems: how much of the gem area do they cover?
-    if (!onPanels && haveBounds && (g_hudLayerDrawn[0] || g_gemsCoveredFrames > 0)) {
+    if (!gem && !raisedPiece && !coversPanelPiece && haveBounds && (g_hudLayerDrawn[0] || g_gemsCoveredFrames > 0)) {
         const float areaLeft = GemArea[0] * g_backBufferWidth, areaTop = GemArea[1] * g_backBufferHeight;
         const float areaRight = GemArea[2] * g_backBufferWidth, areaBottom = GemArea[3] * g_backBufferHeight;
         const float overlapWidth = std::max(0.0f, std::min(drawRight, areaRight) - std::max(drawLeft, areaLeft));
@@ -1082,7 +1123,7 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
         // Each eye's copy through the 3D copy of its pixel shader - if its texture has a height map
         // (gems without one go on the panels flat).
         IDirect3DPixelShader9* const reliefShader =
-            reliefTexture && reliefTexture->height ? Relief::ReliefShader(device, g_currentPixelShader) : nullptr;
+            (gem || raisedPiece) && reliefTexture && reliefTexture->height ? Relief::ReliefShader(device, g_currentPixelShader) : nullptr;
         // The shift is in texture coordinates, so it's scaled by how much of the texture one piece uses:
         // the regular gem is a whole 128-wide texture, the star notes are frames of a 512-wide sheet
         // (4 across), the open notes' bar is one 512-wide texture stretched across all five lanes.
@@ -1118,6 +1159,7 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
             g_originalSetPixelShaderConstantF(device, Relief::ZeroRegister, g_pixelConstants[Relief::ZeroRegister], 3);
             g_originalSetTexture(device, Relief::HeightSampler, g_boundTextures[Relief::HeightSampler]);
         }
+        if (splitPiece) DrawOutsidePanelArea(device, gameViewport, draw);
     } else {
         result = DrawIntoOverlayTarget(device, g_overlaySurface, g_overlayClearedThisFrame, gameViewport, draw);
     }
@@ -1127,10 +1169,17 @@ static HRESULT DrawIntoOverlay(IDirect3DDevice9* device, DrawCall draw, const Sh
         D3DSURFACE_DESC description = {};
         IDirect3DBaseTexture9* texture = g_boundTextures[0];
         if (texture && texture->GetType() == D3DRTYPE_TEXTURE) static_cast<IDirect3DTexture9*>(texture)->GetLevelDesc(0, &description);
-        LogLine("[hud] VS %08X PS %08X %s texture %ux%u #%08X, %u vertices %s at %.0f %.0f -> %s%s", shader->hash,
+        char bounds[64] = "bounds unknown";
+        if (haveBounds) snprintf(bounds, sizeof(bounds), "x %.0f-%.0f y %.0f-%.0f", drawLeft, drawRight, drawTop, drawBottom);
+        DWORD sourceBlend = 0, destinationBlend = 0;
+        device->GetRenderState(D3DRS_SRCBLEND, &sourceBlend);
+        device->GetRenderState(D3DRS_DESTBLEND, &destinationBlend);
+        LogLine("[hud] VS %08X PS %08X %s texture %ux%u #%08X, %u vertices %s at %.0f %.0f (%s, blend %lu/%lu) -> %s%s", shader->hash,
                 pixelShader != g_pixelShaders.end() ? pixelShader->second.hash : 0u, shader->isHighway ? "highway" : "other  ",
                 description.Width, description.Height, (g_settings.debugTools ? Relief::SaveTextureFile(texture) : 0u), g_drawVertexCount, g_upVertexData ? "(user pointer)" : "", place.centreX, place.centreY,
-                piece == HudPiece::Gem ? (gem ? "gem (3D)" : "raised (3D)") : "flat", layeredHud ? "" : " (3D gems off)");
+                bounds, sourceBlend, destinationBlend,
+                gem ? "gem (3D)" : raisedPiece ? "raised (3D)" : coversPanelPiece ? "on the panels (covers 3D)" : splitPiece ? "split (covers 3D)" : "flat",
+                layeredHud ? "" : " (3D gems off)");
     }
     ++g_counters.overlayDraws;
 
@@ -2687,7 +2736,12 @@ static void LogStatusIfDue() {
 static void StartNextHeadsetFrame() {
     UINT overlayWidth = std::min<UINT>(g_backBufferWidth, 1920);
     UINT overlayHeight = g_backBufferWidth ? overlayWidth * g_backBufferHeight / g_backBufferWidth : 1080;
-    g_xr.SetHudLayerArea(GemArea[0], GemArea[1], GemArea[2], GemArea[3]);
+    if (!g_xr.IsRunning()) {
+        // The panels' size is fixed once the session has its swapchains, so the area only changes here.
+        GemArea[0] = 0.5f - 0.5f * g_settings.hudDepthArea;
+        GemArea[2] = 0.5f + 0.5f * g_settings.hudDepthArea;
+        g_xr.SetHudLayerArea(GemArea[0], GemArea[1], GemArea[2], GemArea[3]);
+    }
     if (!g_xr.IsRunning() && g_xr.TryInitialize(g_loaderPath, overlayWidth, overlayHeight, g_settings.renderScale, LogLine))
         LogLine("[xr] ready, waiting for the session to start");
 
