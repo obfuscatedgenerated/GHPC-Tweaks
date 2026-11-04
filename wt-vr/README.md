@@ -89,6 +89,7 @@ To uninstall, delete `d3d9.dll`, `openxr_loader.dll`, `openxr_loader_LICENSE.txt
 - `save_textures=1` only works in VR (because it's implemented in the heightmap pipeline)
 - Band members occasionally change to chrome shading from camera LOD
 - Recording studio venue is aggressively culled, ignoring the camera controller
+- Star note depth map looks bad (needs to be redone as a model)
 
 ## Planned
 
